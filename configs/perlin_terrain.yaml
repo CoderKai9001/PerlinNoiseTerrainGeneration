@@ -17,6 +17,10 @@ lighting:
   spec_strength: 0.5
   shininess: 512.0
 
+animation:
+  scroll_speed: 0.2   # world units per second (terrain spans 2 units); negative scrolls the other way
+  speed_step: 0.05    # change in speed per UP/DOWN key press
+
 camera:
   eye: [1.5, 1.5, 2.5]
   fov: 60.0
