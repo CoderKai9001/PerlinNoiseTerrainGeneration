@@ -17,7 +17,7 @@ void main() {
     vec3 L = normalize(u_light_pos - v_world_pos); // vector pointing towards light source
     // vec3 L = normalize(vec3(-1.0, 1.0, 1.0));
     vec3 N = normalize(v_normal); // Normal vector
-    vec3 V = normalize(u_view_pos); // viewing vector i.e; vector pointing towards the camera
+    vec3 V = normalize(u_view_pos - v_world_pos); // viewing vector i.e; vector pointing towards the camera
     vec3 H = normalize(L + V); // Half vector between L and V (used in Blinn-Phong equation for lighting)
 
     float diff = max(dot(N,L), 0.0);

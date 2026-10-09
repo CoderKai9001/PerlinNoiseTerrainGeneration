@@ -2,8 +2,8 @@ seed: 42
 wireframe: false
 
 terrain:
-  grid_size: 200
-  amplitude: 0.4
+  grid_size: 2000
+  amplitude: 0.3
   base_cells: 5
   num_octaves: 6
   persistence: 0.5
@@ -14,12 +14,10 @@ lighting:
   light_pos: [2.0, 3.0, 2.0]
   light_color: [1.0, 1.0, 1.0]
   ambient: 0.1
-  spec_strength: 0.5
-  shininess: 512.0
-
-animation:
-  scroll_speed: 0.2   # world units per second (terrain spans 2 units); negative scrolls the other way
-  speed_step: 0.05    # change in speed per UP/DOWN key press
+  spec_strength: 0.25
+  shininess: 2048.0
+  cavity_strength: 8.0  # fake AO: how strongly creases below their surroundings are darkened (0 = off)
+  cavity_octaves: 2     # octaves forming the smooth base that creases are measured against
 
 camera:
   eye: [1.5, 1.5, 2.5]

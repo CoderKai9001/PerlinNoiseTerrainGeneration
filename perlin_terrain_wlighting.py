@@ -47,52 +47,18 @@ def get_perlin_noise(X, Z, cells, grads, offset=(0.0, 0.0)):
     sz = fade_curve(fz)
     return lerp(lerp(n00, n10, sx), lerp(n01, n11, sx), sz)
 
-class ScrollingOctave:
-    """One octave of Perlin noise whose gradient grid can be shifted along X.
-
-    The lattice is scrolled by `scroll` cells (kept in [0, 1)). Every time the
-    scroll crosses a whole cell, the column of gradients that has left the
-    terrain is dropped and a fresh column of random gradients is added on the
-    other side, so new terrain is generated while old terrain is annihilated.
-    """
-    def __init__(self, cells):
-        self.cells = cells
-        self.offset = rng.uniform(0.0, 1.0, size=2)   # random shift per octave
-        self.scroll = 0.0
-        # px spans [offset, cells + offset + scroll) with offset, scroll < 1, so
-        # cx+1 reaches at most ceil(cells) + 2 along X; one less along Z.
-        rows = int(np.ceil(cells)) + 2
-        cols = int(np.ceil(cells)) + 3
-        self.grads = get_perlin_grid(rows, cols)
-
-    def advance(self, cells_moved):
-        self.scroll += cells_moved
-        while self.scroll >= 1.0:   # terrain moves towards -X: new column on the +X side
-            self.grads = np.concatenate([self.grads[:, 1:], get_perlin_grid(self.grads.shape[0], 1)], axis=1)
-            self.scroll -= 1.0
-        while self.scroll < 0.0:    # terrain moves towards +X: new column on the -X side
-            self.grads = np.concatenate([get_perlin_grid(self.grads.shape[0], 1), self.grads[:, :-1]], axis=1)
-            self.scroll += 1.0
-
-    def noise(self, X, Z):
-        offset = (self.offset[0] + self.scroll, self.offset[1])
-        return get_perlin_noise(X, Z, self.cells, self.grads, offset)
-
-class ScrollingFBM:
-    def __init__(self, base_cells, num_octaves, persistence=0.5, lacunarity=2.0):
-        self.amps = [persistence ** k for k in range(num_octaves)]
-        self.octaves = [ScrollingOctave(base_cells * lacunarity ** k) for k in range(num_octaves)]
-
-    def advance(self, distance):
-        # distance is in world units; the terrain spans [-1, 1] i.e. 2 units = `cells` lattice cells
-        for octave in self.octaves:
-            octave.advance(distance * octave.cells / 2.0)
-
-    def __call__(self, X, Z):
-        noise = 0.0
-        for amp, octave in zip(self.amps, self.octaves):
-            noise += amp * octave.noise(X, Z)
-        return noise / sum(self.amps)
+def fbm(X, Z, base_cells, num_octaves, persistence=0.5, lacunarity=2.0):
+    noise = 0.0
+    total_amp = 0.0
+    for k in range(num_octaves):
+        amp = persistence ** k
+        cells = base_cells * lacunarity ** k
+        offset = rng.uniform(0.0, 1.0, size=2)   # random shift per octave
+        dim = int(np.ceil(cells)) + 2
+        grads = get_perlin_grid(dim, dim)
+        noise += amp * get_perlin_noise(X, Z, cells, grads, offset)
+        total_amp += amp
+    return noise / total_amp
 
 def compute_normals(triangles, positions):
     # triangles: (F, 3) vertex indices, positions: (V, 3)
@@ -139,12 +105,7 @@ class GridMesh(mglw.WindowConfig):
         X, Z = np.meshgrid(x,z)
         # The noise is evaluated on a row of x and a column of z; broadcasting expands it to the full
         # grid, so the per-point floor/fade work only runs on grid_size values instead of grid_size^2
-        self.x_row, self.z_col = x[None, :], z[:, None]
-        self.amplitude = t.amplitude
-        self.fbm = ScrollingFBM(t.base_cells, t.num_octaves, t.persistence, t.lacunarity)
-        self.scroll_speed = cfg.animation.scroll_speed
-        self.speed_step = cfg.animation.speed_step
-        Y = (self.amplitude * self.fbm(self.x_row, self.z_col)).astype("f4")
+        Y = (t.amplitude * fbm(x[None, :], z[:, None], t.base_cells, t.num_octaves, t.persistence, t.lacunarity)).astype("f4")
         R = np.full_like(X, t.color[0]/255.0).astype("f4")
         G = np.full_like(X, t.color[1]/255.0).astype("f4")
         B = np.full_like(X, t.color[2]/255.0).astype("f4")
@@ -162,10 +123,9 @@ class GridMesh(mglw.WindowConfig):
                               tl, bl, br], axis=-1) # Split a 2x2 cell into 2 triangles (6 of [n-1 , n-1] to [n-1, n-1, 6])
 
         indices = triangles.astype("i4").ravel()
-        self.triangles = indices.reshape(-1,3)
-        self.vertices = np.column_stack([positions, colors, np.zeros_like(positions)]).astype("f4")
-        self.vertices[:, 6:9] = compute_normals(self.triangles, positions)
-        self.mesh_vbo = self.ctx.buffer(self.vertices.tobytes(), dynamic=True)
+        normals = compute_normals(indices.reshape(-1,3), positions)
+        vertices = np.column_stack([positions, colors, normals]).astype("f4")
+        self.mesh_vbo = self.ctx.buffer(vertices.tobytes())
         self.mesh_ibo = self.ctx.buffer(indices.tobytes())
         self.mesh_vao = self.ctx.vertex_array(self.program, 
                                               [(self.mesh_vbo, "3f 3f 3f", "in_pos", "in_color", "in_normal")], 
@@ -180,32 +140,7 @@ class GridMesh(mglw.WindowConfig):
         self.program["u_spec_strength"].value = light.spec_strength
         self.program["u_shininess"].value     = light.shininess
 
-    def update_terrain(self, frame_time):
-        if self.scroll_speed == 0.0:
-            return
-        # Shift every octave's gradient grid, then re-evaluate heights and normals on the fixed mesh
-        self.fbm.advance(self.scroll_speed * frame_time)
-        self.vertices[:, 1] = (self.amplitude * self.fbm(self.x_row, self.z_col)).ravel()
-        self.vertices[:, 6:9] = compute_normals(self.triangles, self.vertices[:, 0:3])
-        self.mesh_vbo.write(self.vertices.tobytes())
-
-    def on_key_event(self, key, action, modifiers):
-        keys = self.wnd.keys
-        if action != keys.ACTION_PRESS:
-            return
-        if key == keys.UP:
-            self.scroll_speed += self.speed_step
-        elif key == keys.DOWN:
-            self.scroll_speed -= self.speed_step
-        elif key == keys.SPACE:
-            self.scroll_speed = 0.0
-        else:
-            return
-        print(f"scroll speed: {self.scroll_speed:+.3f} units/s")
-
     def on_render(self, time, frame_time):
-        self.update_terrain(frame_time)
-
         self.ctx.clear(0.1, 0.1, 0.1, 1.0, depth=1.0)
         self.ctx.enable(moderngl.DEPTH_TEST)
 

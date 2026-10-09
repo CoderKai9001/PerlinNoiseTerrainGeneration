@@ -7,3 +7,4 @@ va_id_product.py
 shaders/va_id_product.vert
 __pycache__/
 outputs/
+*.cap

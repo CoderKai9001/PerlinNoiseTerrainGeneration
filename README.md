@@ -4,7 +4,7 @@ A small project where I build up to a lit, procedurally generated terrain using 
 
 Everything runs on Python with `moderngl` and `moderngl-window`, and the environment is managed with [pixi](https://pixi.sh).
 
-![Final lit terrain](assets/perlin_terrain_blinnphong.png)
+![Final lit terrain](assets/optimized_wshadowhax.png)
 
 ## Setup
 
@@ -68,7 +68,7 @@ Now the fun part. Each vertex gets a height from Perlin noise: random gradient v
 
 `perlin_terrain_wlighting.py`
 
-The final version. Per-vertex normals are computed by averaging the normals of the surrounding triangles, and the fragment shader (`shaders/terrain.frag`) does ambient, diffuse and Blinn-Phong specular lighting. The terrain is rendered as a solid surface with a single base color, and the shading is what gives it shape.
+Per-vertex normals are computed by averaging the normals of the surrounding triangles, and the fragment shader (`shaders/terrain.frag`) does ambient, diffuse and Blinn-Phong specular lighting. The terrain is rendered as a solid surface with a single base color, and the shading is what gives it shape.
 
 ![Perlin terrain with Blinn-Phong lighting](assets/perlin_terrain_blinnphong.png)
 
@@ -78,6 +78,25 @@ All the knobs live in `configs/perlin_terrain.yaml` (seed, grid size, noise octa
 pixi run python perlin_terrain_wlighting.py terrain.amplitude=0.6 terrain.num_octaves=8
 pixi run python perlin_terrain_wlighting.py wireframe=true seed=7
 ```
+
+### 8. Moving everything to the GPU, and faking shadows
+
+`perlin_terrain_optimized.py`
+
+The final version. Computing the noise and normals in NumPy is slow once the grid gets big, so here all of it moves into the vertex shader (`shaders/terrain_opt.vert`). The CPU only uploads a flat grid once. Instead of storing a grid of random gradients, each lattice point gets its gradient from a hash of its coordinates, and the normals come from the analytic derivative of the noise rather than from averaging triangles. That makes a much denser grid practical.
+
+The lighting (`shaders/terrain_opt.frag`) also gets two cheap tricks that make it look less flat without any actual shadow computation. The ambient light blends between a sky color and a ground color depending on which way the surface faces, so steep slopes come out darker. And creases are darkened by checking how far a point sits below a smoothed version of the terrain (just the first couple of octaves), which works like a fake ambient occlusion.
+
+![GPU terrain with fake shadows](assets/optimized_wshadowhax.png)
+
+It reads the same config file, with two extra settings under `lighting` for the crease darkening:
+
+```
+pixi run python perlin_terrain_optimized.py terrain.grid_size=1000 terrain.amplitude=0.5
+pixi run python perlin_terrain_optimized.py lighting.cavity_strength=0 lighting.cavity_octaves=3
+```
+
+`cavity_strength` controls how dark the creases get (0 turns it off), and `cavity_octaves` sets how many octaves count as the smooth base, so a higher value only picks out finer creases.
 
 ## Layout
 
@@ -89,7 +108,8 @@ point_grid.py                 step 4
 flat_mesh.py                  step 5
 perlin_terrain.py             step 6
 perlin_terrain_wlighting.py   step 7
+perlin_terrain_optimized.py   step 8
 shaders/                      GLSL shaders used by the steps above
-configs/                      Hydra config for the final step
+configs/                      Hydra config for the last two steps
 assets/                       screenshots used in this README
 ```
